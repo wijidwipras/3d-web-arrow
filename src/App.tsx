@@ -7,6 +7,8 @@ import ArcheryFeedback from './components/ArcheryFeedback'
 import { arrowModelSrc, bowModelSrc, gestureLabel } from './config/arConfig'
 import { ArcheryController, type ArcherySnapshot } from './features/ar/archeryInteraction'
 import { computeArrowPose, computeBowPose, defaultCalibration, type Calibration, type Viewport } from './features/ar/handPose'
+import { PoseStabilizer } from './features/ar/poseStabilizer'
+import { RelativeDepth, orientation3D, palmMeasure } from './features/ar/spatialPose'
 import { useGestureCamera } from './features/camera/useGestureCamera'
 
 const sliderFields: { key: keyof Calibration; label: string; min: number; max: number; step: number; format: (value: number) => string }[] = [
@@ -25,13 +27,21 @@ export default function App() {
   const [showTracking, setShowTracking] = useState(true)
   const [showBow, setShowBow] = useState(true)
   const [showArrow, setShowArrow] = useState(true)
+  const [spatialEnabled, setSpatialEnabled] = useState(true)
+  const [depthCalibrationVersion, setDepthCalibrationVersion] = useState(0)
+  const bowDepth = useRef(new RelativeDepth())
+  const arrowDepth = useRef(new RelativeDepth())
   const [calibration, setCalibration] = useState<Calibration>(defaultCalibration)
   const [modelError, setModelError] = useState(false)
   const [retryKey, setRetryKey] = useState(0)
   const [archery, setArchery] = useState<ArcherySnapshot>(emptyArchery)
   const archeryRef = useRef(new ArcheryController())
+  const bowStabilizer = useRef(new PoseStabilizer())
+  const arrowStabilizer = useRef(new PoseStabilizer())
   const lastBowRotation = useRef<number | undefined>(undefined)
   const lastArrowRotation = useRef<number | undefined>(undefined)
+  const lastBowTilt = useRef({ tiltX: 0, tiltY: 0 })
+  const lastArrowTilt = useRef({ tiltX: 0, tiltY: 0 })
   const camera = useGestureCamera()
   const ready = camera.status === 'ready'
   const busy = camera.status === 'requesting' || camera.status === 'loading'
@@ -62,50 +72,87 @@ export default function App() {
     return () => { cancelled = true }
   }, [camera.start])
 
-  const bowPose = useMemo(() => camera.tracking.bow
-    ? computeBowPose(camera.tracking.bow.landmarks, viewport, camera.tracking.video, calibration, lastBowRotation.current)
-    : null,
-  [camera.tracking.bow, camera.tracking.video, viewport, calibration])
+  const bowPose = useMemo(() => {
+    const hand = camera.tracking.bow
+    if (!hand) return null
+    const pose = computeBowPose(hand.landmarks, viewport, camera.tracking.video, calibration, lastBowRotation.current)
+    if (!pose || !spatialEnabled) return pose
+    return {
+      ...pose,
+      ...orientation3D(hand.worldLandmarks, pose.rotation, 'bow', lastBowTilt.current),
+      depth: bowDepth.current.update(palmMeasure(hand.landmarks, viewport, camera.tracking.video), true),
+    }
+  }, [camera.tracking.bow, camera.tracking.video, viewport, calibration, spatialEnabled, depthCalibrationVersion])
   const arrowPose = useMemo(() => {
     if (!camera.tracking.arrow) return null
     const pose = computeArrowPose(
       camera.tracking.arrow.landmarks, viewport, camera.tracking.video, lastArrowRotation.current,
     )
-    return pose
-  }, [camera.tracking.arrow, camera.tracking.video, viewport])
+    if (!pose || !spatialEnabled) return pose
+    return {
+      ...pose,
+      ...orientation3D(camera.tracking.arrow.worldLandmarks, pose.rotation, 'arrow', lastArrowTilt.current),
+      depth: arrowDepth.current.update(
+        palmMeasure(camera.tracking.arrow.landmarks, viewport, camera.tracking.video), true,
+      ),
+    }
+  }, [camera.tracking.arrow, camera.tracking.video, viewport, spatialEnabled, depthCalibrationVersion])
 
   useEffect(() => {
-    if (bowPose) lastBowRotation.current = bowPose.rotation
+    if (bowPose) {
+      lastBowRotation.current = bowPose.rotation
+      lastBowTilt.current = { tiltX: bowPose.tiltX ?? 0, tiltY: bowPose.tiltY ?? 0 }
+    }
   }, [bowPose])
 
   useEffect(() => {
-    if (arrowPose) lastArrowRotation.current = arrowPose.rotation
+    if (arrowPose) {
+      lastArrowRotation.current = arrowPose.rotation
+      lastArrowTilt.current = { tiltX: arrowPose.tiltX ?? 0, tiltY: arrowPose.tiltY ?? 0 }
+    }
   }, [arrowPose])
 
   useEffect(() => {
     if (!ready) {
       lastBowRotation.current = undefined
       lastArrowRotation.current = undefined
+      lastBowTilt.current = { tiltX: 0, tiltY: 0 }
+      lastArrowTilt.current = { tiltX: 0, tiltY: 0 }
+      bowDepth.current.reset()
+      arrowDepth.current.reset()
     }
   }, [ready])
 
   useEffect(() => {
     if (!ready) {
       archeryRef.current.reset()
+      bowStabilizer.current.reset()
+      arrowStabilizer.current.reset()
       setArchery(emptyArchery)
       return
     }
+    const now = performance.now()
     setArchery(archeryRef.current.update({
-      bowPose,
+      bowPose: bowStabilizer.current.update(bowPose, now),
       bowActive: bowActive && showBow,
-      handArrowPose: arrowPose,
+      handArrowPose: arrowStabilizer.current.update(arrowPose, now),
       arrowHand: camera.tracking.arrow,
       arrowGestureActive: arrowActive,
       viewport,
       video: camera.tracking.video,
-      now: performance.now(),
+      now,
     }))
   }, [ready, bowPose, bowActive, arrowPose, arrowActive, camera.tracking, viewport, showBow])
+
+  const calibrateDepth = () => {
+    bowStabilizer.current.reset()
+    arrowStabilizer.current.reset()
+    bowDepth.current.calibrate(camera.tracking.bow
+      ? palmMeasure(camera.tracking.bow.landmarks, viewport, camera.tracking.video) : null)
+    arrowDepth.current.calibrate(camera.tracking.arrow
+      ? palmMeasure(camera.tracking.arrow.landmarks, viewport, camera.tracking.video) : null)
+    setDepthCalibrationVersion((version) => version + 1)
+  }
 
   const toggleCamera = () => {
     if (ready || busy) {
@@ -182,6 +229,8 @@ export default function App() {
       <div className="setting-toggle"><div><strong>Tampilkan busur</strong><small>Muncul setelah membuka lima jari</small></div><button className={`switch ${showBow ? 'on' : ''}`} onClick={() => setShowBow((value) => !value)} role="switch" aria-checked={showBow} aria-label="Tampilkan busur"><span /></button></div>
       <div className="setting-toggle"><div><strong>Tampilkan anak panah</strong><small>Dua jari, lalu cubit tali untuk menarik</small></div><button className={`switch ${showArrow ? 'on' : ''}`} onClick={() => setShowArrow((value) => !value)} role="switch" aria-checked={showArrow} aria-label="Tampilkan anak panah"><span /></button></div>
       <div className="setting-toggle"><div><strong>Rangka tangan</strong><small>Titik dan garis tracking di layar</small></div><button className={`switch ${showTracking ? 'on' : ''}`} onClick={() => setShowTracking((value) => !value)} role="switch" aria-checked={showTracking} aria-label="Tampilkan rangka tangan"><span /></button></div>
+      <div className="setting-toggle"><div><strong>Gerak 3D</strong><small>Rotasi dan kedalaman mengikuti tangan</small></div><button className={`switch ${spatialEnabled ? 'on' : ''}`} onClick={() => setSpatialEnabled((value) => !value)} role="switch" aria-checked={spatialEnabled} aria-label="Gerak 3D"><span /></button></div>
+      {spatialEnabled && <button className="reset-calibration" onClick={calibrateDepth}>Kalibrasi posisi awal tangan</button>}
       <div className="setting-section-title"><span>KALIBRASI BUSUR</span><span>LIVE</span></div>
       {sliderFields.map((field) => <label className="calibration-field" key={field.key}><span><strong>{field.label}</strong><output>{field.format(calibration[field.key])}</output></span><input type="range" min={field.min} max={field.max} step={field.step} value={calibration[field.key]} onChange={(event) => setCalibration((current) => ({ ...current, [field.key]: Number(event.target.value) }))} /></label>)}
       <button className="reset-calibration" onClick={() => setCalibration(defaultCalibration)}><RotateCcw size={15} /> Reset kalibrasi</button>

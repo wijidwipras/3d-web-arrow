@@ -4,7 +4,7 @@ export type Viewport = { width: number; height: number }
 export type VideoSize = { width: number; height: number }
 export type Point = { x: number; y: number }
 export type Calibration = { offsetX: number; offsetY: number; scale: number; rotation: number }
-export type BowPose = { x: number; y: number; length: number; rotation: number }
+export type BowPose = { x: number; y: number; length: number; rotation: number; depth?: number; tiltX?: number; tiltY?: number; quaternion?: readonly [number, number, number, number] }
 export type ArrowPose = BowPose
 
 export const defaultCalibration: Calibration = {

@@ -1,9 +1,10 @@
 import { Component, Suspense, useEffect, useMemo, useRef } from 'react'
 import type { ErrorInfo, ReactNode } from 'react'
-import { Canvas, useFrame } from '@react-three/fiber'
+import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { useGLTF } from '@react-three/drei'
-import { Box3, Group, Vector3 } from 'three'
+import { Box3, Group, Quaternion, Vector3 } from 'three'
 import { arrowModelSrc, bowModelSrc, bowRig, maxRenderDpr } from '../config/arConfig'
+import { orientationQuaternion } from '../features/ar/spatialPose'
 import type { BowPose, Viewport } from '../features/ar/handPose'
 import IceParticles from './IceParticles'
 import type { ArrowShot } from '../features/ar/archeryInteraction'
@@ -51,6 +52,22 @@ function BowString({ draw }: { draw: number }) {
   </>
 }
 
+function ViewCamera({ viewport }: { viewport: Viewport }) {
+  const { camera } = useThree()
+  useEffect(() => {
+    if (!('fov' in camera)) return
+    camera.fov = 2 * Math.atan(viewport.height / 2000) * 180 / Math.PI
+    camera.updateProjectionMatrix()
+  }, [camera, viewport.height])
+  return null
+}
+
+function poseQuaternion(pose: BowPose) {
+  return pose.quaternion
+    ? new Quaternion(...pose.quaternion)
+    : orientationQuaternion(pose)
+}
+
 function TrackedAsset({ src, pose, viewport, enabled, depth, bowDraw }: { src: string; pose: BowPose | null; viewport: Viewport; enabled: boolean; depth: number; bowDraw?: number }) {
   const { scene } = useGLTF(src)
   const group = useRef<Group>(null)
@@ -81,12 +98,14 @@ function TrackedAsset({ src, pose, viewport, enabled, depth, bowDraw }: { src: s
     asset.visible = (shouldShow && initialized.current) || !!(enabled && next)
     if (!next || !enabled) return
 
-    const x = next.x - viewport.width / 2
-    const y = viewport.height / 2 - next.y
-    const size = next.length / normalized.height
+    const z = depth + (next.depth ?? 0)
+    const perspective = (1000 - z) / 1000
+    const x = (next.x - viewport.width / 2) * perspective
+    const y = (viewport.height / 2 - next.y) * perspective
+    const size = next.length / normalized.height * perspective
     if (!initialized.current) {
-      asset.position.set(x, y, depth)
-      asset.rotation.z = next.rotation
+      asset.position.set(x, y, z)
+      asset.quaternion.copy(poseQuaternion(next))
       asset.scale.setScalar(size)
       initialized.current = true
       return
@@ -95,9 +114,10 @@ function TrackedAsset({ src, pose, viewport, enabled, depth, bowDraw }: { src: s
     const blend = 1 - Math.exp(-delta * 13)
     asset.position.x += (x - asset.position.x) * blend
     asset.position.y += (y - asset.position.y) * blend
+    const depthBlend = 1 - Math.exp(-delta * 7)
+    asset.position.z += (z - asset.position.z) * depthBlend
     asset.scale.setScalar(asset.scale.x + (size - asset.scale.x) * blend)
-    const angleDelta = Math.atan2(Math.sin(next.rotation - asset.rotation.z), Math.cos(next.rotation - asset.rotation.z))
-    asset.rotation.z += angleDelta * blend
+    asset.quaternion.slerp(poseQuaternion(next), 1 - Math.exp(-delta * 9))
   })
 
   return <group ref={group} visible={false}>
@@ -113,7 +133,7 @@ function FlyingArrows({ shot, viewport, active }: { shot: ArrowShot | null; view
   const { scene } = useGLTF(arrowModelSrc)
   const layer = useRef<Group>(null)
   const lastShotId = useRef(0)
-  const arrows = useRef<Array<{ node: Group; vx: number; vy: number; age: number }>>([])
+  const arrows = useRef<Array<{ node: Group; vx: number; vy: number; vz: number; age: number }>>([])
   const normalized = useMemo(() => {
     const box = new Box3().setFromObject(scene)
     return { center: box.getCenter(new Vector3()), height: Math.max(box.getSize(new Vector3()).y, .001) }
@@ -126,11 +146,14 @@ function FlyingArrows({ shot, viewport, active }: { shot: ArrowShot | null; view
     const model = scene.clone(true)
     model.position.copy(normalized.center).multiplyScalar(-1)
     node.add(model)
-    node.position.set(shot.pose.x - viewport.width / 2, viewport.height / 2 - shot.pose.y, 2)
-    node.rotation.z = shot.pose.rotation
-    node.scale.setScalar(shot.pose.length / normalized.height)
+    const z = 2 + (shot.pose.depth ?? 0)
+    const perspective = (1000 - z) / 1000
+    node.position.set((shot.pose.x - viewport.width / 2) * perspective,
+      (viewport.height / 2 - shot.pose.y) * perspective, z)
+    node.quaternion.copy(poseQuaternion(shot.pose))
+    node.scale.setScalar(shot.pose.length / normalized.height * perspective)
     layer.current.add(node)
-    arrows.current.push({ node, vx: shot.velocityX, vy: shot.velocityY, age: 0 })
+    arrows.current.push({ node, vx: shot.velocityX, vy: shot.velocityY, vz: shot.velocityZ, age: 0 })
   }, [shot, viewport, scene, normalized, active])
 
   useEffect(() => {
@@ -146,8 +169,10 @@ function FlyingArrows({ shot, viewport, active }: { shot: ArrowShot | null; view
       arrow.age += dt
       arrow.node.position.x += arrow.vx * dt
       arrow.node.position.y -= arrow.vy * dt
+      arrow.node.position.z += arrow.vz * dt
       arrow.vy += 320 * dt
-      arrow.node.rotation.z = Math.atan2(-arrow.vx, -arrow.vy)
+      const direction = new Vector3(arrow.vx, -arrow.vy, arrow.vz).normalize()
+      arrow.node.quaternion.setFromUnitVectors(new Vector3(0, 1, 0), direction)
       if (arrow.age > 3 || Math.abs(arrow.node.position.x) > viewport.width * 1.5 || Math.abs(arrow.node.position.y) > viewport.height * 1.5) {
         layer.current?.remove(arrow.node)
         arrows.current.splice(index, 1)
@@ -177,7 +202,8 @@ export default function ARViewer({ bowPose, arrowPose, viewport, showBow, showAr
 }) {
   return <div className="ar-three-layer" aria-hidden="true">
     <ModelBoundary resetKey={retryKey} onError={onError}>
-      <Canvas orthographic camera={{ position: [0, 0, 100], zoom: 1, near: .1, far: 500 }} gl={{ alpha: true, antialias: true }} dpr={[1, maxRenderDpr]}>
+      <Canvas camera={{ position: [0, 0, 1000], fov: 45, near: .1, far: 3000 }} gl={{ alpha: true, antialias: true }} dpr={[1, maxRenderDpr]}>
+        <ViewCamera viewport={viewport} />
         <ambientLight intensity={1.8} />
         <hemisphereLight args={['#ebfdff', '#153647', 2.4]} />
         <directionalLight position={[3, 5, 8]} intensity={3} />

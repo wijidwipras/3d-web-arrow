@@ -105,3 +105,62 @@ describe('initial left-hand bow assignment', () => {
     expect(roles.update([{ ...hand('Left', .25), handedness: null }])).toEqual({ bow: null, arrow: null })
   })
 })
+
+describe('identity recovery', () => {
+  it('expires old positions after tracking is lost', () => {
+    const roles = new HandRoleAssigner()
+    roles.update([hand('Left', .2), hand('Right', .8)], 0)
+    roles.update([], 100)
+    const right = hand('Right', .2)
+    expect(roles.update([right], 600)).toEqual({ bow: null, arrow: right })
+  })
+
+  it('expires the missing hand independently while the other remains visible', () => {
+    const roles = new HandRoleAssigner()
+    const right = hand('Right', .8)
+    roles.update([hand('Left', .2), right], 0)
+    roles.update([right], 300)
+    roles.update([right], 600)
+    const left = hand('Left', .7)
+    expect(roles.update([right, left], 650)).toEqual({ bow: left, arrow: right })
+  })
+
+  it('reacquires labels after hands cross through overlap', () => {
+    const roles = new HandRoleAssigner()
+    roles.update([hand('Left', .47), hand('Right', .53)], 0)
+    roles.update([hand('Left', .5), hand('Right', .5)], 50)
+    const left = hand('Left', .54)
+    const right = hand('Right', .46)
+    expect(roles.update([right, left], 100)).toEqual({ bow: left, arrow: right })
+  })
+
+  it('uses a confident label for a single hand equidistant from old wrists', () => {
+    const roles = new HandRoleAssigner()
+    roles.update([hand('Left', .2), hand('Right', .8)], 0)
+    const left = hand('Left', .5)
+    expect(roles.update([left], 50)).toEqual({ bow: left, arrow: null })
+  })
+
+  it('corrects sustained confident labels even when a crossing frame was missed', () => {
+    const roles = new HandRoleAssigner()
+    roles.update([hand('Left', .4), hand('Right', .6)], 0)
+    const left = hand('Left', .6)
+    const right = hand('Right', .4)
+    roles.update([left, right], 50)
+    roles.update([right, left], 150)
+    expect(roles.update([left, right], 250)).toEqual({ bow: left, arrow: right })
+  })
+
+  it('does not initialize identity from low confidence labels', () => {
+    const roles = new HandRoleAssigner()
+    const left = { ...hand('Left', .2), handednessScore: .55 }
+    expect(roles.update([left], 0)).toEqual({ bow: null, arrow: null })
+    const confidentLeft = { ...left, handednessScore: .95 }
+    expect(roles.update([confidentLeft], 50)).toEqual({ bow: confidentLeft, arrow: null })
+  })
+
+  it('ignores detections with no wrist landmarks', () => {
+    const roles = new HandRoleAssigner()
+    expect(roles.update([{ ...hand('Left', .2), landmarks: [] }], 0)).toEqual({ bow: null, arrow: null })
+  })
+})

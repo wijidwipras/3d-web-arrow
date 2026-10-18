@@ -1,9 +1,11 @@
 import type { DetectedHand } from './handRoles'
+import { Quaternion, Vector3 } from 'three'
 import { bowRig } from '../../config/arConfig'
+import { bowAxis3D, orientationQuaternion } from './spatialPose'
 import { landmarkToViewport, type ArrowPose, type BowPose, type VideoSize, type Viewport } from './handPose'
 
 export type ArcheryPhase = 'idle' | 'armed' | 'nocked' | 'drawing' | 'flying'
-export type ArrowShot = { id: number; pose: ArrowPose; velocityX: number; velocityY: number }
+export type ArrowShot = { id: number; pose: ArrowPose; velocityX: number; velocityY: number; velocityZ: number }
 export type ArcherySnapshot = {
   phase: ArcheryPhase
   draw: number
@@ -78,21 +80,28 @@ export function bowPullAxis(rotation: number) {
 
 /** Position of the imported bow string's midpoint on the mirrored video. */
 export function bowStringCenter(pose: BowPose) {
-  const axis = bowPullAxis(pose.rotation)
+  const axis = bowAxis3D(pose)
   const offset = pose.length / bowRig.modelHeight * (bowRig.stringX - bowRig.modelCenterX)
-  return { x: pose.x + axis.x * offset, y: pose.y + axis.y * offset }
+  return { x: pose.x + axis.x * offset, y: pose.y - axis.y * offset }
 }
 
 function attachedArrowPose(bow: BowPose, draw: number, viewport: Viewport): ArrowPose {
-  const axis = bowPullAxis(bow.rotation)
+  const axis = bowAxis3D(bow)
   const string = bowStringCenter(bow)
   const length = Math.min(bow.length * .67, viewport.width * 1.3)
   const nockX = string.x + axis.x * draw * maxDrawFraction * bow.length
-  const nockY = string.y + axis.y * draw * maxDrawFraction * bow.length
+  const nockY = string.y - axis.y * draw * maxDrawFraction * bow.length
   // The arrow's nock sits roughly half a model length behind its center.
+  const arrowRotation = orientationQuaternion(bow).multiply(
+    new Quaternion().setFromAxisAngle(new Vector3(0, 0, 1), Math.PI / 2),
+  )
   return {
+    quaternion: [arrowRotation.x, arrowRotation.y, arrowRotation.z, arrowRotation.w],
     x: nockX - axis.x * length * .5,
-    y: nockY - axis.y * length * .5,
+    y: nockY + axis.y * length * .5,
+    depth: (bow.depth ?? 0) + axis.z * (draw * maxDrawFraction * bow.length - length * .5),
+    tiltX: bow.tiltX ?? 0,
+    tiltY: bow.tiltY ?? 0,
     length,
     rotation: bow.rotation + Math.PI / 2,
   }
@@ -111,11 +120,13 @@ export class ArcheryController {
   private lastBowPose: BowPose | null = null
   private lastShotAt = -Infinity
   private nextShotId = 1
+  private aimLock: Pick<BowPose, 'depth' | 'tiltX' | 'tiltY' | 'length'> | null = null
 
   update(input: ArcheryInput): ArcherySnapshot {
     const { now, arrowHand, arrowGestureActive, bowActive, handArrowPose, viewport, video } = input
+    if (this.phase !== 'nocked' && this.phase !== 'drawing') this.aimLock = null
     if (input.bowPose && bowActive) {
-      this.lastBowPose = input.bowPose
+      this.lastBowPose = this.aimLock ? { ...input.bowPose, ...this.aimLock } : input.bowPose
       this.lastBowAt = now
     }
     if (arrowHand) this.lastArrowHandAt = now
@@ -159,12 +170,13 @@ export class ArcheryController {
           if (now - this.releaseSince >= releaseConfirmMs && this.releaseSamples >= releaseMinSamples) {
             if (!this.lostDuringDraw && this.draw >= minShotFraction / maxDrawFraction) {
               const pose = attachedArrowPose(bow, this.draw, viewport)
-              const axis = bowPullAxis(bow.rotation)
+              const axis = bowAxis3D(bow)
               const speed = (600 + this.draw * 1500) * Math.max(.7, viewport.width / 1000)
               shot = {
                 id: this.nextShotId++, pose,
                 velocityX: -axis.x * speed,
-                velocityY: -axis.y * speed,
+                velocityY: axis.y * speed,
+                velocityZ: -axis.z * speed,
               }
               this.lastShotAt = now
               this.phase = 'flying'
@@ -183,23 +195,34 @@ export class ArcheryController {
           const index = landmarkToViewport(arrowHand.landmarks[8], viewport, video)
           const fingers = { x: (thumb.x + index.x) / 2, y: (thumb.y + index.y) / 2 }
           const string = bowStringCenter(bow)
-          const axis = bowPullAxis(bow.rotation)
-          const distance = (fingers.x - string.x) * axis.x + (fingers.y - string.y) * axis.y
-          this.draw = clamp(distance / (maxDrawFraction * bow.length), 0, 1)
+          const axis = bowAxis3D(bow)
+          // Once nocked, depth estimates from either hand cannot change the pull.
+          const depthDelta = 0
+          const distance = (fingers.x - string.x) * axis.x
+            - (fingers.y - string.y) * axis.y + depthDelta * axis.z
+          const nextDraw = clamp(distance / (maxDrawFraction * bow.length), 0, 1)
+          if (Math.abs(nextDraw - this.draw) > .008) this.draw = nextDraw
           this.phase = this.draw >= minShotFraction / maxDrawFraction ? 'drawing' : 'nocked'
         }
       } else {
         this.clearRelease()
         this.lostDuringDraw = true
       }
-    } else if (this.phase === 'armed' && bow && arrowHand && handArrowPose) {
+    } else if (this.phase === 'armed' && bow && arrowHand) {
       const pinching = pinchOf(arrowHand, this.pinching, video)
       this.pinching = pinching ?? this.pinching
       if (pinching) {
         const thumb = landmarkToViewport(arrowHand.landmarks[4], viewport, video)
         const index = landmarkToViewport(arrowHand.landmarks[8], viewport, video)
         const string = bowStringCenter(bow)
-        if (Math.hypot((thumb.x + index.x) / 2 - string.x, (thumb.y + index.y) / 2 - string.y) <= bow.length * nockRadiusFraction) {
+        const screenDistance = Math.hypot((thumb.x + index.x) / 2 - string.x, (thumb.y + index.y) / 2 - string.y)
+        // Acquisition follows the visible target. Independently calibrated hand
+        // depths are too uncertain to reject a pinch that is on the string.
+        if (screenDistance <= bow.length * nockRadiusFraction) {
+          this.aimLock = {
+            depth: bow.depth, tiltX: bow.tiltX,
+            tiltY: bow.tiltY, length: bow.length,
+          }
           this.phase = 'nocked'
           this.draw = 0
           this.lostDuringDraw = false
@@ -239,6 +262,7 @@ export class ArcheryController {
   }
 
   reset() {
+    this.aimLock = null
     this.clearRelease()
     this.phase = 'idle'
     this.draw = 0

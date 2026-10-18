@@ -135,11 +135,12 @@ export function useGestureCamera() {
                 landmarks,
                 worldLandmarks: result.worldLandmarks[index],
                 handedness: result.handedness[index]?.[0]?.categoryName ?? null,
+                handednessScore: result.handedness[index]?.[0]?.score ?? 0,
                 gesture: category?.categoryName ?? null,
                 score: category?.score ?? 0,
               }
             })
-            const roles = rolesRef.current.update(hands)
+            const roles = rolesRef.current.update(hands, now)
             setTracking({
               ...roles,
               bowGestureActive: fiveFingerRef.current.update(roles.bow, now),

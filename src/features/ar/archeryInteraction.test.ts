@@ -237,3 +237,101 @@ describe('release evidence while pulling', () => {
     expect(state.phase).toBe('drawing')
   })
 })
+
+describe('3D archery', () => {
+  it('keeps arrow depth attached and launches along the rotated bow axis', () => {
+    const controller = new ArcheryController()
+    const spatialBow = { ...bowPose, depth: 80, tiltY: .35, tiltX: .2 }
+    const y = bowStringCenter(spatialBow).y / 1000
+    const frame = (now: number, hand: DetectedHand, gesture: boolean) => ({
+      ...input(now, hand, gesture), bowPose: spatialBow,
+      handArrowPose: { ...handArrowPose, depth: 80 },
+    })
+    controller.update(frame(0, arrowHand(y, false), true))
+    const nocked = controller.update(frame(50, arrowHand(y, true), false))
+    expect(nocked.phase).toBe('nocked')
+    expect(nocked.arrowPose?.quaternion).toHaveLength(4)
+    const drawn = controller.update(frame(100, arrowHand(.8, true), false))
+    expect(drawn.draw).toBeGreaterThan(0)
+    const shot = release(controller, frame(150, arrowHand(.8, false), false)).shot
+    expect(shot).not.toBeNull()
+    expect(shot!.velocityZ).not.toBe(0)
+    expect(shot!.pose.depth).not.toBe(0)
+  })
+
+  it('does not fire after a brief hand tracking loss in 3D', () => {
+    const controller = new ArcheryController()
+    const spatialBow = { ...bowPose, depth: 50, tiltX: .25 }
+    const y = bowStringCenter(spatialBow).y / 1000
+    const withBow = (now: number, hand: DetectedHand | null, gesture: boolean) =>
+      ({ ...input(now, hand, gesture), bowPose: spatialBow, handArrowPose: { ...handArrowPose, depth: 50 } })
+    controller.update(withBow(0, arrowHand(y, false), true))
+    controller.update(withBow(50, arrowHand(y, true), false))
+    controller.update(withBow(100, arrowHand(.72, true), false))
+    controller.update(withBow(150, null, false))
+    expect(release(controller, withBow(200, arrowHand(.72, false), false)).shot).toBeNull()
+  })
+})
+
+it('locks depth, tilt and scale while aiming, ignores arrow depth, then unlocks', () => {
+  const controller = new ArcheryController()
+  const locked = { ...bowPose, depth: 50, tiltX: .2, tiltY: .25 }
+  const y = bowStringCenter(locked).y / 1000
+  const frame = (now: number, hand: DetectedHand, gesture: boolean, noisy = false) => ({
+    ...input(now, hand, gesture),
+    bowPose: noisy ? { ...locked, depth: -120, tiltX: -.6, tiltY: -.5, length: 1300 } : locked,
+    handArrowPose: { ...handArrowPose, depth: noisy ? 175 : 50 },
+  })
+  controller.update(frame(0, arrowHand(y, false), true))
+  controller.update(frame(50, arrowHand(y, true), false))
+  const drawing = controller.update(frame(100, arrowHand(.72, true), false))
+  const noisy = controller.update(frame(150, arrowHand(.72, true), false, true))
+  expect(noisy.feedback?.bowPose).toEqual(locked)
+  expect(noisy.draw).toBe(drawing.draw)
+  expect(noisy.arrowPose).toEqual(drawing.arrowPose)
+  expect(noisy.shot).toBeNull()
+  const moved = controller.update({ ...frame(200, arrowHand(.72, true), false, true),
+    bowPose: { ...locked, x: locked.x + 20, depth: -120 } })
+  expect(moved.feedback?.bowPose?.x).toBe(locked.x + 20)
+  const released = release(controller, frame(250, arrowHand(.72, false), false, true))
+  expect(released.shot).not.toBeNull()
+  const free = controller.update(frame(450, arrowHand(.72, false), false, true))
+  expect(free.feedback?.bowPose?.depth).toBe(-120)
+})
+
+describe('screen-space nocking after stabilization', () => {
+  it('accepts a pinch on the visible string despite disagreement in hand depths', () => {
+    const controller = new ArcheryController()
+    const bow = { ...bowPose, depth: -120, tiltX: .2, tiltY: .3 }
+    const y = bowStringCenter(bow).y / 1000
+    const frame = (now: number, pinching: boolean) => ({
+      ...input(now, arrowHand(y, pinching), !pinching),
+      bowPose: bow,
+      handArrowPose: { ...handArrowPose, depth: 175 },
+    })
+    const prepared = controller.update(frame(0, false))
+    expect(prepared.feedback?.nearString).toBe(true)
+    const attached = controller.update(frame(50, true))
+    expect(attached.phase).toBe('nocked')
+    expect(attached.shot).toBeNull()
+    const held = controller.update({ ...frame(100, true), bowPose: { ...bow, depth: 150 } })
+    expect(held.feedback?.bowPose?.depth).toBe(-120)
+  })
+
+  it('still requires the pinch to be close to the visible string', () => {
+    const controller = new ArcheryController()
+    controller.update(input(0, arrowHand(.1, false), true))
+    const far = controller.update(input(50, arrowHand(.1, true), false))
+    expect(far.phase).toBe('armed')
+    expect(far.feedback?.nearString).toBe(false)
+  })
+
+  it('can attach from valid pinch landmarks without a free-arrow pose', () => {
+    const controller = new ArcheryController()
+    const y = bowStringCenter(bowPose).y / 1000
+    controller.update(input(0, arrowHand(y, false), true))
+    expect(controller.update({
+      ...input(50, arrowHand(y, true), false), handArrowPose: null,
+    }).phase).toBe('nocked')
+  })
+})

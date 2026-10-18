@@ -4,6 +4,7 @@ export type DetectedHand = {
   landmarks: readonly NormalizedLandmark[]
   worldLandmarks?: readonly Landmark[]
   handedness: string | null
+  handednessScore?: number
   gesture: string | null
   score: number
 }
@@ -22,32 +23,71 @@ export class HandRoleAssigner {
   private bowWrist: Wrist | null = null
   private arrowWrist: Wrist | null = null
 
-  update(hands: readonly DetectedHand[]): HandRoles {
-    if (hands.length === 0) return { bow: null, arrow: null }
+  private bowSeenAt = -Infinity
+  private arrowSeenAt = -Infinity
+  private overlapping = false
+  private conflictSince: number | null = null
+  private now = 0
+
+  update(input: readonly DetectedHand[], now = performance.now()): HandRoles {
+    this.now = now
+    if (now - this.bowSeenAt > 500) this.bowWrist = null
+    if (now - this.arrowSeenAt > 500) this.arrowWrist = null
+    const hands = input.filter((hand) => hand.landmarks.length > 0)
+    const confident = (hand: DetectedHand) => (hand.handednessScore ?? 1) >= .8
+    const left = hands.filter((hand) => confident(hand) && hand.handedness === 'Left')
+    const right = hands.filter((hand) => confident(hand) && hand.handedness === 'Right')
+    const labelled = { bow: left.length === 1 ? left[0] : null, arrow: right.length === 1 ? right[0] : null }
+    const finish = (bow: DetectedHand | null, arrow: DetectedHand | null): HandRoles => {
+      // Brief label flips must not move assets, but persistent confident labels
+      // must be able to correct a bad spatial match.
+      const conflict = (labelled.bow && bow && labelled.bow !== bow) ||
+        (labelled.arrow && arrow && labelled.arrow !== arrow) ||
+        (bow && labelled.arrow === bow) || (arrow && labelled.bow === arrow)
+      if (conflict && (hands.length === 1 || (labelled.bow && labelled.arrow))) this.conflictSince ??= now
+      else this.conflictSince = null
+      if (this.conflictSince !== null && now - this.conflictSince >= 200) {
+        bow = labelled.bow
+        arrow = labelled.arrow
+        this.conflictSince = null
+      }
+      this.remember(bow, arrow)
+      return { bow, arrow }
+    }
+    if (hands.length >= 2 && distanceTo(hands[0], wristOf(hands[1])) < .0004) {
+      this.conflictSince = null
+      this.overlapping = true
+      return { bow: null, arrow: null }
+    }
+    if (this.overlapping) {
+      if (hands.length < 2 && (this.bowWrist || this.arrowWrist)) return { bow: null, arrow: null }
+      this.overlapping = false
+      this.bowWrist = null
+      this.arrowWrist = null
+    }
+    if (hands.length === 0) {
+      this.conflictSince = null
+      return { bow: null, arrow: null }
+    }
 
     if (!this.bowWrist) {
-      const left = hands.filter((hand) => hand.handedness === 'Left')
-      const right = hands.filter((hand) => hand.handedness === 'Right')
       // Never use detection order to decide the initial bow hand.
       // Ambiguous labels wait for a clear reading instead of locking a guess.
       const bow = left.length === 1 ? left[0] : null
       const arrow = right.length === 1 ? right[0] : null
-      this.remember(bow, arrow)
-      return { bow, arrow }
+      return finish(bow, arrow)
     }
 
     if (hands.length === 1) {
       const hand = hands[0]
-      // Overlapping wrists can make a single surviving detection impossible to
-      // identify. Preserve both tracks until the camera separates them again.
+      // When spatial matching ties outside an overlap, use a confident label.
       if (this.arrowWrist && Math.abs(
         distanceTo(hand, this.bowWrist) - distanceTo(hand, this.arrowWrist),
-      ) < .0004) return { bow: null, arrow: null }
+      ) < .0004) return finish(labelled.bow, labelled.arrow)
       const isArrow = this.isArrowWhenAlone(hand)
       const bow = isArrow ? null : hand
       const arrow = isArrow ? hand : null
-      this.remember(bow, arrow)
-      return { bow, arrow }
+      return finish(bow, arrow)
     }
 
     const bowMatches = this.bowSide
@@ -70,14 +110,13 @@ export class HandRoleAssigner {
     if (Math.abs(firstCost - secondCost) > .0004) {
       bowIndex = firstCost < secondCost ? 0 : 1
     } else if (this.arrowWrist) {
-      // Do not overwrite remembered identities with an ambiguous assignment.
-      return { bow: null, arrow: null }
+      // Spatial ties outside an overlap can still have unambiguous labels.
+      return finish(labelled.bow, labelled.arrow)
     }
 
     const bow = hands[bowIndex]
     const arrow = hands[bowIndex === 0 ? 1 : 0]
-    this.remember(bow, arrow)
-    return { bow, arrow }
+    return finish(bow, arrow)
   }
 
   private isArrowWhenAlone(hand: DetectedHand): boolean {
@@ -96,16 +135,22 @@ export class HandRoleAssigner {
 
   private remember(bow: DetectedHand | null, arrow: DetectedHand | null) {
     if (bow) {
+      this.bowSeenAt = this.now
       this.bowWrist = wristOf(bow)
       this.bowSide ??= bow.handedness
     }
     if (arrow) {
+      this.arrowSeenAt = this.now
       this.arrowWrist = wristOf(arrow)
       this.arrowSide ??= arrow.handedness
     }
   }
 
   reset() {
+    this.bowSeenAt = -Infinity
+    this.arrowSeenAt = -Infinity
+    this.overlapping = false
+    this.conflictSince = null
     this.bowSide = null
     this.arrowSide = null
     this.bowWrist = null
