@@ -22,6 +22,12 @@ function input(now: number, hand: DetectedHand | null, gesture: boolean): Archer
   return { now, arrowHand: hand, arrowGestureActive: gesture, bowPose, bowActive: true, handArrowPose, viewport, video }
 }
 
+function release(controller: ArcheryController, frame: ArcheryInput) {
+  controller.update(frame)
+  controller.update({ ...frame, now: frame.now + 50 })
+  return controller.update({ ...frame, now: frame.now + 100 })
+}
+
 describe('ArcheryController', () => {
   it('nocks, draws and fires opposite the pulling direction', () => {
     const controller = new ArcheryController()
@@ -35,7 +41,7 @@ describe('ArcheryController', () => {
     const drawing = controller.update(input(100, arrowHand(.72, true), false))
     expect(drawing.phase).toBe('drawing')
     expect(drawing.draw).toBeGreaterThan(.5)
-    const released = controller.update(input(150, arrowHand(.72, false), false))
+    const released = release(controller, input(150, arrowHand(.72, false), false))
     expect(released.phase).toBe('flying')
     expect(released.shot?.velocityY).toBeLessThan(0)
     expect(released.shot?.velocityX).toBeCloseTo(0)
@@ -47,15 +53,15 @@ describe('ArcheryController', () => {
     const stringY = bowStringCenter(bowPose).y / 1000
     controller.update(input(0, arrowHand(stringY, false), true))
     controller.update(input(50, arrowHand(stringY, true), false))
-    const cancelled = controller.update(input(100, arrowHand(stringY, false), false))
+    const cancelled = release(controller, input(100, arrowHand(stringY, false), false))
     expect(cancelled.phase).toBe('armed')
     expect(cancelled.shot).toBeNull()
 
-    controller.update(input(150, arrowHand(stringY, true), false))
-    controller.update(input(200, arrowHand(.72, true), false))
-    controller.update(input(250, arrowHand(.72, false), false))
-    expect(controller.update(input(300, arrowHand(stringY, false), false)).phase).toBe('idle')
-    expect(controller.update(input(350, arrowHand(stringY, false), true)).phase).toBe('armed')
+    controller.update(input(250, arrowHand(stringY, true), false))
+    controller.update(input(300, arrowHand(.72, true), false))
+    release(controller, input(350, arrowHand(.72, false), false))
+    expect(controller.update(input(500, arrowHand(stringY, false), false)).phase).toBe('idle')
+    expect(controller.update(input(550, arrowHand(stringY, false), true)).phase).toBe('armed')
   })
 
   it('cancels the draw if the arrow hand remains missing', () => {
@@ -77,7 +83,7 @@ describe('ArcheryController', () => {
     controller.update(input(50, arrowHand(stringY, true), false))
     controller.update(input(100, arrowHand(.72, true), false))
     controller.update(input(150, null, false))
-    const resumed = controller.update(input(200, arrowHand(.72, false), false))
+    const resumed = release(controller, input(200, arrowHand(.72, false), false))
     expect(resumed.phase).toBe('armed')
     expect(resumed.shot).toBeNull()
   })
@@ -91,8 +97,55 @@ describe('ArcheryController', () => {
     expect(nocked.phase).toBe('nocked')
     expect(nocked.arrowPose?.rotation).toBeCloseTo(Math.PI / 2)
     controller.update({ ...input(100, arrowHand(.5, true, 720), false), bowPose: sideBow })
-    const shot = controller.update({ ...input(150, arrowHand(.5, false, 720), false), bowPose: sideBow }).shot
+    const shot = release(controller, { ...input(150, arrowHand(.5, false, 720), false), bowPose: sideBow }).shot
     expect(shot?.velocityX).toBeLessThan(0)
     expect(shot?.velocityY).toBeCloseTo(0)
+  })
+})
+
+describe('pinch release stability', () => {
+  function drawingController() {
+    const controller = new ArcheryController()
+    controller.update(input(0, arrowHand(bowStringCenter(bowPose).y / 1000, false), true))
+    controller.update(input(50, arrowHand(bowStringCenter(bowPose).y / 1000, true), false))
+    controller.update(input(100, arrowHand(.72, true), false))
+    return controller
+  }
+
+  it('holds through a brief open detection and resets release confirmation when pinched again', () => {
+    const controller = drawingController()
+    const held = controller.update(input(150, arrowHand(.72, false), false))
+    expect(held.phase).toBe('drawing')
+    expect(held.shot).toBeNull()
+    controller.update(input(200, arrowHand(.72, true), false))
+    expect(controller.update(input(250, arrowHand(.72, false), false)).phase).toBe('drawing')
+    expect(controller.update(input(300, arrowHand(.72, false), false)).shot).toBeNull()
+    expect(controller.update(input(350, arrowHand(.72, false), false)).shot).not.toBeNull()
+    expect(controller.update(input(400, arrowHand(.72, false), false)).shot).toBeNull()
+  })
+
+  it('does not release from invalid landmarks and can resume pulling', () => {
+    const controller = drawingController()
+    const broken = arrowHand(.72, true)
+    broken.landmarks[8].x = NaN
+    expect(controller.update(input(150, broken, false)).phase).toBe('drawing')
+    controller.update(input(200, arrowHand(.72, true), false))
+    expect(release(controller, input(250, arrowHand(.72, false), false)).shot).not.toBeNull()
+  })
+
+  it('does not fire after tracking disappears during release confirmation', () => {
+    const controller = drawingController()
+    controller.update(input(150, arrowHand(.72, false), false))
+    controller.update(input(200, null, false))
+    const result = release(controller, input(250, arrowHand(.72, false), false))
+    expect(result.shot).toBeNull()
+    expect(result.phase).toBe('armed')
+  })
+
+  it('requires multiple observations even when frames are far apart', () => {
+    const controller = drawingController()
+    controller.update(input(150, arrowHand(.72, false), false))
+    expect(controller.update(input(300, arrowHand(.72, false), false)).shot).toBeNull()
+    expect(controller.update(input(350, arrowHand(.72, false), false)).shot).not.toBeNull()
   })
 })

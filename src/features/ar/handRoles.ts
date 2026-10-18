@@ -34,6 +34,11 @@ export class HandRoleAssigner {
 
     if (hands.length === 1) {
       const hand = hands[0]
+      // Overlapping wrists can make a single surviving detection impossible to
+      // identify. Preserve both tracks until the camera separates them again.
+      if (this.arrowWrist && Math.abs(
+        distanceTo(hand, this.bowWrist) - distanceTo(hand, this.arrowWrist),
+      ) < .0004) return { bow: null, arrow: null }
       const isArrow = this.isArrowWhenAlone(hand)
       const bow = isArrow ? null : hand
       const arrow = isArrow ? hand : null
@@ -52,11 +57,17 @@ export class HandRoleAssigner {
     else if (arrowMatches.length === 1) bowIndex = arrowMatches[0] === 0 ? 1 : 0
     else bowIndex = distanceTo(hands[0], this.bowWrist) <= distanceTo(hands[1], this.bowWrist) ? 0 : 1
 
-    // A turned hand can briefly receive the opposite handedness label. Keep the
-    // tracked wrist when the position evidence is clearly stronger than that label.
-    const otherIndex = bowIndex === 0 ? 1 : 0
-    if (distanceTo(hands[bowIndex], this.bowWrist) - distanceTo(hands[otherIndex], this.bowWrist) > .04) {
-      bowIndex = otherIndex
+    // Match both wrists jointly. Handedness often flips during overlap and
+    // must not override clear continuity, even when the hands are close.
+    const firstCost = distanceTo(hands[0], this.bowWrist)
+      + (this.arrowWrist ? distanceTo(hands[1], this.arrowWrist) : 0)
+    const secondCost = distanceTo(hands[1], this.bowWrist)
+      + (this.arrowWrist ? distanceTo(hands[0], this.arrowWrist) : 0)
+    if (Math.abs(firstCost - secondCost) > .0004) {
+      bowIndex = firstCost < secondCost ? 0 : 1
+    } else if (this.arrowWrist) {
+      // Do not overwrite remembered identities with an ambiguous assignment.
+      return { bow: null, arrow: null }
     }
 
     const bow = hands[bowIndex]
@@ -69,7 +80,7 @@ export class HandRoleAssigner {
     if (this.arrowWrist && this.bowWrist) {
       const bowDistance = distanceTo(hand, this.bowWrist)
       const arrowDistance = distanceTo(hand, this.arrowWrist)
-      if (Math.abs(bowDistance - arrowDistance) > .04) return arrowDistance < bowDistance
+      if (Math.abs(bowDistance - arrowDistance) > .0004) return arrowDistance < bowDistance
     }
     if (hand.handedness && this.bowSide && hand.handedness !== this.bowSide) return true
     if (hand.handedness && this.arrowSide && hand.handedness === this.arrowSide) return true

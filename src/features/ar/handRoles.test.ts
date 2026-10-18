@@ -58,3 +58,27 @@ describe('HandRoleAssigner', () => {
     expect(roles.update([other, near])).toEqual({ bow: near, arrow: other })
   })
 })
+
+describe('nearby hand identity', () => {
+  it('keeps assets on their hands when nearby labels and detection order flip', () => {
+    const roles = new HandRoleAssigner()
+    roles.update([hand('Left', .44), hand('Right', .56)])
+    const bow = hand('Right', .46)
+    const arrow = hand('Left', .54)
+    expect(roles.update([arrow, bow])).toEqual({ bow, arrow })
+    const nearerBow = hand('Right', .48)
+    const nearerArrow = hand('Left', .52)
+    expect(roles.update([nearerBow, nearerArrow])).toEqual({ bow: nearerBow, arrow: nearerArrow })
+    expect(roles.update([nearerArrow])).toEqual({ bow: null, arrow: nearerArrow })
+  })
+
+  it('preserves identities through ambiguous overlap and reacquires them', () => {
+    const roles = new HandRoleAssigner()
+    roles.update([hand('Left', .47), hand('Right', .53)])
+    expect(roles.update([hand('Right', .5), hand('Left', .5)])).toEqual({ bow: null, arrow: null })
+    expect(roles.update([hand('Left', .5)])).toEqual({ bow: null, arrow: null })
+    const bow = hand('Left', .46)
+    const arrow = hand('Right', .54)
+    expect(roles.update([arrow, bow])).toEqual({ bow, arrow })
+  })
+})

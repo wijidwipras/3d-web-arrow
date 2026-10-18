@@ -24,6 +24,8 @@ export type ArcheryInput = {
 }
 
 const trackingGraceMs = 350
+const releaseConfirmMs = 100
+const releaseMinSamples = 3
 const maxDrawFraction = bowRig.maxPull / bowRig.modelHeight
 const minShotFraction = .045
 const nockRadiusFraction = .17
@@ -32,18 +34,19 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max)
 }
 
-function pinchOf(hand: DetectedHand, wasPinching: boolean): boolean {
+function pinchOf(hand: DetectedHand, wasPinching: boolean): boolean | null {
   const points = hand.worldLandmarks && hand.worldLandmarks.length >= 21 ? hand.worldLandmarks : hand.landmarks
-  if (points.length < 18) return false
+  if (points.length < 18) return null
+  if (![4, 8, 5, 17].every((i) => [points[i].x, points[i].y, points[i].z].every(Number.isFinite))) return null
   const distance = (a: number, b: number) => Math.hypot(
     points[a].x - points[b].x,
     points[a].y - points[b].y,
     points[a].z - points[b].z,
   )
   const palmWidth = distance(5, 17)
-  if (palmWidth < .01) return false
+  if (palmWidth < .01) return null
   const ratio = distance(4, 8) / palmWidth
-  return ratio < (wasPinching ? .52 : .32)
+  return ratio < (wasPinching ? .65 : .32)
 }
 
 /** Screen-space direction from the string toward the hand that pulls it. */
@@ -77,6 +80,8 @@ export class ArcheryController {
   private phase: ArcheryPhase = 'idle'
   private draw = 0
   private pinching = false
+  private releaseSince: number | null = null
+  private releaseSamples = 0
   private lostDuringDraw = false
   private wasArrowGestureActive = false
   private lastArrowHandAt = -Infinity
@@ -105,6 +110,7 @@ export class ArcheryController {
       this.phase = 'idle'
       this.draw = 0
       this.pinching = false
+      this.clearRelease()
       this.lostDuringDraw = false
     }
 
@@ -113,27 +119,40 @@ export class ArcheryController {
       if (!bow) {
         this.phase = handPresent ? 'armed' : 'idle'
         this.draw = 0
+        this.pinching = false
+        this.clearRelease()
         this.lostDuringDraw = false
       } else if (arrowHand) {
         const pinching = pinchOf(arrowHand, this.pinching)
-        if (!pinching && this.pinching) {
-          if (!this.lostDuringDraw && this.draw >= minShotFraction / maxDrawFraction) {
-            const pose = attachedArrowPose(bow, this.draw, viewport)
-            const axis = bowPullAxis(bow.rotation)
-            const speed = (600 + this.draw * 1500) * Math.max(.7, viewport.width / 1000)
-            shot = {
-              id: this.nextShotId++, pose,
-              velocityX: -axis.x * speed,
-              velocityY: -axis.y * speed,
+        if (pinching === null) {
+          // Unknown geometry is tracking loss, never evidence of an open pinch.
+          this.clearRelease()
+          this.lostDuringDraw = true
+        } else if (!pinching && this.pinching) {
+          this.releaseSince ??= now
+          this.releaseSamples += 1
+          if (now - this.releaseSince >= releaseConfirmMs && this.releaseSamples >= releaseMinSamples) {
+            if (!this.lostDuringDraw && this.draw >= minShotFraction / maxDrawFraction) {
+              const pose = attachedArrowPose(bow, this.draw, viewport)
+              const axis = bowPullAxis(bow.rotation)
+              const speed = (600 + this.draw * 1500) * Math.max(.7, viewport.width / 1000)
+              shot = {
+                id: this.nextShotId++, pose,
+                velocityX: -axis.x * speed,
+                velocityY: -axis.y * speed,
+              }
+              this.lastShotAt = now
+              this.phase = 'flying'
+            } else {
+              this.phase = 'armed'
             }
-            this.lastShotAt = now
-            this.phase = 'flying'
-          } else {
-            this.phase = 'armed'
+            this.draw = 0
+            this.lostDuringDraw = false
+            this.pinching = false
+            this.clearRelease()
           }
-          this.draw = 0
-          this.lostDuringDraw = false
         } else if (pinching) {
+          this.clearRelease()
           this.lostDuringDraw = false
           const thumb = landmarkToViewport(arrowHand.landmarks[4], viewport, video)
           const index = landmarkToViewport(arrowHand.landmarks[8], viewport, video)
@@ -144,13 +163,13 @@ export class ArcheryController {
           this.draw = clamp(distance / (maxDrawFraction * bow.length), 0, 1)
           this.phase = this.draw >= minShotFraction / maxDrawFraction ? 'drawing' : 'nocked'
         }
-        this.pinching = pinching
       } else {
+        this.clearRelease()
         this.lostDuringDraw = true
       }
     } else if (this.phase === 'armed' && bow && arrowHand && handArrowPose) {
       const pinching = pinchOf(arrowHand, this.pinching)
-      this.pinching = pinching
+      this.pinching = pinching ?? this.pinching
       if (pinching) {
         const thumb = landmarkToViewport(arrowHand.landmarks[4], viewport, video)
         const index = landmarkToViewport(arrowHand.landmarks[8], viewport, video)
@@ -162,7 +181,7 @@ export class ArcheryController {
         }
       }
     } else if (arrowHand) {
-      this.pinching = pinchOf(arrowHand, this.pinching)
+      this.pinching = pinchOf(arrowHand, this.pinching) ?? this.pinching
     }
 
     const attached = (this.phase === 'nocked' || this.phase === 'drawing') && bow
@@ -176,7 +195,13 @@ export class ArcheryController {
     }
   }
 
+  private clearRelease() {
+    this.releaseSince = null
+    this.releaseSamples = 0
+  }
+
   reset() {
+    this.clearRelease()
     this.phase = 'idle'
     this.draw = 0
     this.pinching = false
