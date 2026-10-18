@@ -1,16 +1,16 @@
-export const bowModelSrc = '/models/busur.glb'
-export const arrowModelSrc = '/models/anak-panah.glb'
+export const bowModelSrc = '/models/rust-bow.glb'
+export const arrowModelSrc = '/models/arrow.glb'
 export const maxRenderDpr = 2
 export const inferenceIntervalMs = 50
 
-// Local coordinates measured from public/models/busur.glb.
+// Prepared Rust bow coordinates; regenerate with scripts/prepare-models.py.
 export const bowRig = {
-  modelCenterX: -.023611918,
+  modelCenterX: -.20458859636,
   modelHeight: 1.76,
-  stringX: .175,
-  stringBottomY: .07,
-  stringMiddleY: .95,
-  stringTopY: 1.83,
+  stringX: 0,
+  stringBottomY: .28985643645,
+  stringMiddleY: .95004503242,
+  stringTopY: 1.61023362840,
   maxPull: .55,
 } as const
 

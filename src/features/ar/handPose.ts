@@ -66,8 +66,8 @@ export function computeBowPose(
       )
       : measuredRotation
   const desiredLength = Math.min(
-    Math.max(apparentPalmWidth * 10 * calibration.scale, 320),
-    viewport.width * 2,
+    Math.max(apparentPalmWidth * 14 * calibration.scale, 448),
+    viewport.width * 2.8,
   )
 
   return {

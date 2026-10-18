@@ -5,6 +5,7 @@ import { useGLTF } from '@react-three/drei'
 import { Box3, Group, Vector3 } from 'three'
 import { arrowModelSrc, bowModelSrc, bowRig, maxRenderDpr } from '../config/arConfig'
 import type { BowPose, Viewport } from '../features/ar/handPose'
+import IceParticles from './IceParticles'
 import type { ArrowShot } from '../features/ar/archeryInteraction'
 
 class ModelBoundary extends Component<{ children: ReactNode; resetKey: number; onError: () => void }, { failed: boolean }> {
@@ -102,6 +103,7 @@ function TrackedAsset({ src, pose, viewport, enabled, depth, bowDraw }: { src: s
   return <group ref={group} visible={false}>
     <group position={normalized.center.clone().multiplyScalar(-1)}>
       <primitive object={normalized.object} />
+      <IceParticles model={normalized.object} height={normalized.height} power={bowDraw ?? .25} enabled={enabled} kind={bowDraw === undefined ? 'arrow' : 'bow'} />
       {bowDraw !== undefined && <BowString draw={bowDraw} />}
     </group>
   </group>

@@ -47,7 +47,7 @@ describe('HandRoleAssigner', () => {
     const right = hand('Right', .75)
     expect(roles.update([right])).toEqual({ bow: null, arrow: right })
     roles.reset()
-    expect(roles.update([right])).toEqual({ bow: right, arrow: null })
+    expect(roles.update([right])).toEqual({ bow: null, arrow: right })
   })
 
   it('uses wrist proximity when handedness is ambiguous', () => {
@@ -80,5 +80,28 @@ describe('nearby hand identity', () => {
     const bow = hand('Left', .46)
     const arrow = hand('Right', .54)
     expect(roles.update([arrow, bow])).toEqual({ bow, arrow })
+  })
+})
+
+describe('initial left-hand bow assignment', () => {
+  it('waits for the left hand when the right hand appears first', () => {
+    const roles = new HandRoleAssigner()
+    const right = hand('Right', .75)
+    const left = hand('Left', .25)
+    expect(roles.update([right])).toEqual({ bow: null, arrow: right })
+    expect(roles.update([right, left])).toEqual({ bow: left, arrow: right })
+  })
+
+  it('selects the left hand when both appear in reversed detection order', () => {
+    const roles = new HandRoleAssigner()
+    const right = hand('Right', .75)
+    const left = hand('Left', .25)
+    expect(roles.update([right, left])).toEqual({ bow: left, arrow: right })
+  })
+
+  it('does not guess an initial bow hand from ambiguous labels', () => {
+    const roles = new HandRoleAssigner()
+    expect(roles.update([hand('Left', .25), hand('Left', .75)])).toEqual({ bow: null, arrow: null })
+    expect(roles.update([{ ...hand('Left', .25), handedness: null }])).toEqual({ bow: null, arrow: null })
   })
 })

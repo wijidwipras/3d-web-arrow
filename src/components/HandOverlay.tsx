@@ -27,13 +27,13 @@ export default function HandOverlay({ landmarks, viewport, video, visible }: {
     ctx.clearRect(0, 0, viewport.width, viewport.height)
     if (!visible) return
 
-    const drawHand = (hand: readonly NormalizedLandmark[] | null, color: string, dot: string) => {
+    const drawHand = (hand: readonly NormalizedLandmark[] | null, color: string, dot: string, fill: string) => {
       if (!hand?.length) return
       const points = hand.map((point) => landmarkToViewport(point, viewport, video))
       ctx.lineCap = 'round'
       ctx.lineJoin = 'round'
       ctx.shadowColor = color
-      ctx.shadowBlur = 13
+      ctx.shadowBlur = 7
       ctx.strokeStyle = color
       ctx.lineWidth = 2.5
       for (const [a, b] of HAND_CONNECTIONS) {
@@ -42,17 +42,20 @@ export default function HandOverlay({ landmarks, viewport, video, visible }: {
         ctx.lineTo(points[b].x, points[b].y)
         ctx.stroke()
       }
-      ctx.shadowBlur = 9
+      ctx.shadowBlur = 5
       points.forEach(({ x, y }, index) => {
         ctx.beginPath()
         ctx.arc(x, y, index === 0 || [4, 8, 12, 16, 20].includes(index) ? 5 : 3.5, 0, Math.PI * 2)
-        ctx.fillStyle = index === 0 ? '#ffffff' : dot
+        ctx.fillStyle = fill
         ctx.fill()
+        ctx.strokeStyle = dot
+        ctx.lineWidth = index === 0 ? 2 : 1.5
+        ctx.stroke()
       })
     }
 
-    drawHand(landmarks.bow, 'rgba(83, 234, 224, .92)', '#86fff2')
-    drawHand(landmarks.arrow, 'rgba(255, 190, 112, .94)', '#ffe0a6')
+    drawHand(landmarks.bow, '#000000', '#000000', '#000000')
+    drawHand(landmarks.arrow, 'rgba(140, 85, 210, .95)', '#bd93f2', '#241039')
   }, [landmarks.bow, landmarks.arrow, video, viewport, visible])
 
   return <canvas ref={canvasRef} className="hand-overlay" aria-hidden="true" />

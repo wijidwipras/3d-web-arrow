@@ -153,7 +153,7 @@ export default function App() {
       <div className="start-icon"><Aperture size={37} strokeWidth={1.3} /></div>
       <div className="start-eyebrow">REALTIME HAND-TRACKED 3D</div>
       <h1>Busur di tanganmu.</h1>
-      <p>Buka lima jari untuk memunculkan busur, lalu dua jari pada tangan kedua untuk anak panah. Cubit dekat tali, tarik, lalu lepaskan untuk menembak.</p>
+      <p>Buka lima jari tangan kiri untuk memunculkan busur, lalu dua jari tangan kanan untuk anak panah. Cubit dekat tali, tarik, lalu lepaskan untuk menembak.</p>
       {camera.error && <div className="start-error" role="alert">{camera.error}</div>}
       <button className="start-button" onClick={toggleCamera}>
         {busy ? <><span className="button-spinner" /> Batalkan</> : <><Camera size={19} /> {camera.status === 'error' ? 'Coba lagi' : 'Mulai AR'} <ChevronRight size={18} /></>}
@@ -166,13 +166,13 @@ export default function App() {
       <div className="hud-divider" />
       <div className="hud-secondary"><span className="hud-kicker">TANGAN PANAH</span><strong>{archery.phase === 'drawing' ? `Tarik ${Math.round(archery.draw * 100)}%` : archery.phase === 'nocked' ? 'Terkait di tali' : archery.phase === 'flying' ? 'Panah meluncur' : arrowActive ? 'Dua jari' : arrowTracked ? gestureLabel(camera.tracking.arrow?.gesture ?? null) : '—'}</strong></div>
       <div className="hud-divider" />
-      <div className="hud-secondary"><span className="hud-kicker">MODEL AKTIF</span><strong>{showBow && bowActive ? showArrow && archery.arrowVisible ? 'Busur + Panah' : 'Busur Kristal' : showArrow && archery.arrowVisible ? 'Anak Panah' : 'Menunggu gestur'}</strong></div>
+      <div className="hud-secondary"><span className="hud-kicker">MODEL AKTIF</span><strong>{showBow && bowActive ? showArrow && archery.arrowVisible ? 'Busur + Panah' : 'Rust Bow' : showArrow && archery.arrowVisible ? 'Anak Panah' : 'Menunggu gestur'}</strong></div>
       <button className="hud-camera" onClick={camera.stop} title="Matikan kamera"><CameraOff size={18} /><span>Matikan Kamera</span></button>
     </div>}
 
     {ready && !anyTracked && !archery.feedback?.recovering && <div className="hand-guidance"><div className="guidance-ring"><Hand size={39} strokeWidth={1.2} /></div><span>Letakkan tangan di tengah kamera</span><small>Pastikan tangan terlihat jelas dan pencahayaan cukup</small></div>}
-    {ready && !tracked && arrowTracked && !archery.feedback?.recovering && <div className="second-hand-tip">Tangan busur keluar dari frame — peran tangan tetap tersimpan</div>}
-    {ready && tracked && !bowActive && <div className="second-hand-tip">Buka lima jari pada tangan busur</div>}
+    {ready && !tracked && arrowTracked && !archery.feedback?.recovering && <div className="second-hand-tip">Tampilkan tangan kiri dan buka lima jari untuk busur</div>}
+    {ready && tracked && !bowActive && <div className="second-hand-tip">Buka lima jari pada tangan kiri</div>}
     {ready && bowActive && tracked && (archery.phase === 'idle' || archery.phase === 'flying') && <div className="second-hand-tip">{arrowTracked ? 'Tunjukkan dua jari untuk menyiapkan panah' : 'Angkat tangan kedua, lalu tunjukkan dua jari'}</div>}
     {modelError && <div className="model-toast" role="alert"><VideoOff size={17} /> Model 3D gagal dimuat.<button onClick={retryModel}>Coba lagi</button></div>}
 

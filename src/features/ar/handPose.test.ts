@@ -23,7 +23,7 @@ describe('AR coordinate mapping', () => {
     expect(pose).not.toBeNull()
     expect(pose!.x).toBeCloseTo(500)
     expect(pose!.y).toBeCloseTo(514)
-    expect(pose!.length).toBeCloseTo(2000)
+    expect(pose!.length).toBeCloseTo(2800)
     expect(pose!.rotation).toBeCloseTo(-Math.PI / 2)
   })
 

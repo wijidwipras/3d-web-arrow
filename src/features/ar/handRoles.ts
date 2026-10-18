@@ -15,7 +15,7 @@ const wristOf = (hand: DetectedHand): Wrist => ({ x: hand.landmarks[0].x, y: han
 const distanceTo = (hand: DetectedHand, wrist: Wrist) =>
   (hand.landmarks[0].x - wrist.x) ** 2 + (hand.landmarks[0].y - wrist.y) ** 2
 
-/** Locks the first hand to the bow for the entire camera session. */
+/** Initializes the bow on the left hand, then preserves identity by wrist continuity. */
 export class HandRoleAssigner {
   private bowSide: string | null = null
   private arrowSide: string | null = null
@@ -26,8 +26,12 @@ export class HandRoleAssigner {
     if (hands.length === 0) return { bow: null, arrow: null }
 
     if (!this.bowWrist) {
-      const bow = hands[0]
-      const arrow = hands[1] ?? null
+      const left = hands.filter((hand) => hand.handedness === 'Left')
+      const right = hands.filter((hand) => hand.handedness === 'Right')
+      // Never use detection order to decide the initial bow hand.
+      // Ambiguous labels wait for a clear reading instead of locking a guess.
+      const bow = left.length === 1 ? left[0] : null
+      const arrow = right.length === 1 ? right[0] : null
       this.remember(bow, arrow)
       return { bow, arrow }
     }
