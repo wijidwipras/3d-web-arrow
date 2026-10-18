@@ -45,8 +45,8 @@ function BowString({ draw }: { draw: number }) {
   })
 
   return <>
-    <group ref={lower}><mesh><cylinderGeometry args={[.002, .002, 1, 6]} /><meshStandardMaterial color="#b6faff" emissive="#63dff1" emissiveIntensity={.8} /></mesh></group>
-    <group ref={upper}><mesh><cylinderGeometry args={[.002, .002, 1, 6]} /><meshStandardMaterial color="#b6faff" emissive="#63dff1" emissiveIntensity={.8} /></mesh></group>
+    <group ref={lower}><mesh><cylinderGeometry args={[.002, .002, 1, 6]} /><meshStandardMaterial color={`hsl(${180 - draw * 140}, 90%, 75%)`} emissive={`hsl(${180 - draw * 140}, 85%, 55%)`} emissiveIntensity={.8} /></mesh></group>
+    <group ref={upper}><mesh><cylinderGeometry args={[.002, .002, 1, 6]} /><meshStandardMaterial color={`hsl(${180 - draw * 140}, 90%, 75%)`} emissive={`hsl(${180 - draw * 140}, 85%, 55%)`} emissiveIntensity={.8} /></mesh></group>
   </>
 }
 

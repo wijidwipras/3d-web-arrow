@@ -3,6 +3,7 @@ import { useGLTF } from '@react-three/drei'
 import { Aperture, Camera, CameraOff, ChevronRight, Hand, RotateCcw, Settings2, ShieldCheck, Sparkles, VideoOff, X } from 'lucide-react'
 import ARViewer from './components/ARViewer'
 import HandOverlay from './components/HandOverlay'
+import ArcheryFeedback from './components/ArcheryFeedback'
 import { arrowModelSrc, bowModelSrc, gestureLabel } from './config/arConfig'
 import { ArcheryController, type ArcherySnapshot } from './features/ar/archeryInteraction'
 import { computeArrowPose, computeBowPose, defaultCalibration, type Calibration, type Viewport } from './features/ar/handPose'
@@ -15,7 +16,7 @@ const sliderFields: { key: keyof Calibration; label: string; min: number; max: n
   { key: 'rotation', label: 'Putar busur', min: -90, max: 90, step: 1, format: (v) => `${v}°` },
 ]
 
-const emptyArchery: ArcherySnapshot = { phase: 'idle', draw: 0, arrowPose: null, arrowVisible: false, shot: null }
+const emptyArchery: ArcherySnapshot = { phase: 'idle', draw: 0, arrowPose: null, arrowVisible: false, shot: null, feedback: null }
 
 export default function App() {
   const stageRef = useRef<HTMLDivElement>(null)
@@ -128,8 +129,10 @@ export default function App() {
   return <div ref={stageRef} className="ar-app">
     <video ref={camera.videoRef} className={`ar-video ${ready || busy ? 'is-on' : ''}`} autoPlay muted playsInline aria-label="Kamera AR layar penuh" />
     <div className="ar-video-shade" />
-    <ARViewer bowPose={bowPose} arrowPose={archery.arrowPose} viewport={viewport} showBow={showBow && bowActive} showArrow={ready && showArrow && archery.arrowVisible} allowArrows={ready && showArrow} bowDraw={archery.draw} shot={archery.shot} retryKey={retryKey} onError={() => setModelError(true)} />
+    <ARViewer bowPose={archery.feedback?.bowPose ?? bowPose} arrowPose={archery.arrowPose} viewport={viewport} showBow={showBow && bowActive} showArrow={ready && showArrow && archery.arrowVisible} allowArrows={ready && showArrow} bowDraw={archery.draw} shot={archery.shot} retryKey={retryKey} onError={() => setModelError(true)} />
     <HandOverlay landmarks={{ bow: camera.tracking.bow?.landmarks ?? null, arrow: camera.tracking.arrow?.landmarks ?? null }} viewport={viewport} video={camera.tracking.video} visible={ready && showTracking} />
+
+    {ready && showBow && showArrow && <ArcheryFeedback snapshot={archery} viewport={viewport} />}
 
     <header className="ar-header">
       <div className="ar-brand"><span className="ar-brand-icon"><Sparkles size={19} /></span><span>GESTURE <em>AR</em></span><span className="brand-beta">BETA</span></div>
@@ -167,12 +170,10 @@ export default function App() {
       <button className="hud-camera" onClick={camera.stop} title="Matikan kamera"><CameraOff size={18} /><span>Matikan Kamera</span></button>
     </div>}
 
-    {ready && !anyTracked && <div className="hand-guidance"><div className="guidance-ring"><Hand size={39} strokeWidth={1.2} /></div><span>Letakkan tangan di tengah kamera</span><small>Pastikan tangan terlihat jelas dan pencahayaan cukup</small></div>}
-    {ready && !tracked && arrowTracked && <div className="second-hand-tip">Tangan busur keluar dari frame — peran tangan tetap tersimpan</div>}
+    {ready && !anyTracked && !archery.feedback?.recovering && <div className="hand-guidance"><div className="guidance-ring"><Hand size={39} strokeWidth={1.2} /></div><span>Letakkan tangan di tengah kamera</span><small>Pastikan tangan terlihat jelas dan pencahayaan cukup</small></div>}
+    {ready && !tracked && arrowTracked && !archery.feedback?.recovering && <div className="second-hand-tip">Tangan busur keluar dari frame — peran tangan tetap tersimpan</div>}
     {ready && tracked && !bowActive && <div className="second-hand-tip">Buka lima jari pada tangan busur</div>}
     {ready && bowActive && tracked && (archery.phase === 'idle' || archery.phase === 'flying') && <div className="second-hand-tip">{arrowTracked ? 'Tunjukkan dua jari untuk menyiapkan panah' : 'Angkat tangan kedua, lalu tunjukkan dua jari'}</div>}
-    {ready && archery.phase === 'armed' && <div className="second-hand-tip">Cubit pangkal panah di dekat tengah tali busur</div>}
-    {ready && archery.phase === 'nocked' && <div className="second-hand-tip">Tarik tangan panah menjauhi busur, lalu buka cubitan</div>}
     {modelError && <div className="model-toast" role="alert"><VideoOff size={17} /> Model 3D gagal dimuat.<button onClick={retryModel}>Coba lagi</button></div>}
 
     {settingsOpen && <aside className="settings-panel" aria-label="Pengaturan AR">

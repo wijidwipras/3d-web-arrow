@@ -10,6 +10,14 @@ export type ArcherySnapshot = {
   arrowPose: ArrowPose | null
   arrowVisible: boolean
   shot: ArrowShot | null
+  feedback: {
+    bowPose: BowPose | null
+    pinchPoint: { x: number; y: number } | null
+    pinching: boolean
+    nearString: boolean
+    recovering: boolean
+    canShoot: boolean
+  } | null
 }
 
 export type ArcheryInput = {
@@ -34,19 +42,33 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max)
 }
 
-function pinchOf(hand: DetectedHand, wasPinching: boolean): boolean | null {
-  const points = hand.worldLandmarks && hand.worldLandmarks.length >= 21 ? hand.worldLandmarks : hand.landmarks
-  if (points.length < 18) return null
-  if (![4, 8, 5, 17].every((i) => [points[i].x, points[i].y, points[i].z].every(Number.isFinite))) return null
-  const distance = (a: number, b: number) => Math.hypot(
-    points[a].x - points[b].x,
-    points[a].y - points[b].y,
-    points[a].z - points[b].z,
-  )
-  const palmWidth = distance(5, 17)
-  if (palmWidth < .01) return null
-  const ratio = distance(4, 8) / palmWidth
-  return ratio < (wasPinching ? .65 : .32)
+function pinchOf(hand: DetectedHand, wasPinching: boolean, video: VideoSize): boolean | null {
+  // Image landmarks provide independent evidence when inferred 3D depth jitters.
+  // Correct image aspect ratio so rotation does not change the distance metric.
+  const ratioOf = (points: DetectedHand['landmarks'], image: boolean): number | null => {
+    if (points.length < 18) return null
+    if (![0, 4, 8, 9, 5, 17].every((i) =>
+      [points[i].x, points[i].y, ...(image ? [] : [points[i].z])].every(Number.isFinite))) return null
+    const aspect = image && video.height > 0 ? video.width / video.height : 1
+    const distance = (a: number, b: number) => Math.hypot(
+      (points[a].x - points[b].x) * aspect,
+      points[a].y - points[b].y,
+      image ? 0 : points[a].z - points[b].z,
+    )
+    // Palm length remains useful when palm width foreshortens during a turn.
+    const scale = Math.max(distance(5, 17), distance(0, 9) * .8)
+    return scale >= .01 ? distance(4, 8) / scale : null
+  }
+  const imageRatio = ratioOf(hand.landmarks, true)
+  if (imageRatio === null) return null
+  const worldRatio = hand.worldLandmarks?.length
+    ? ratioOf(hand.worldLandmarks, false) : null
+  if (wasPinching) {
+    // A latched pinch only opens on clear separation in both available views.
+    // Disagreement retains the latch, rather than starting a release timer.
+    return !(imageRatio > .8 && (worldRatio === null ? imageRatio > 1 : worldRatio > .85))
+  }
+  return imageRatio < .4 && (worldRatio === null ? imageRatio < .32 : worldRatio < .32)
 }
 
 /** Screen-space direction from the string toward the hand that pulls it. */
@@ -122,8 +144,11 @@ export class ArcheryController {
         this.pinching = false
         this.clearRelease()
         this.lostDuringDraw = false
+      } else if (!input.bowPose) {
+        this.clearRelease()
+        this.lostDuringDraw = true
       } else if (arrowHand) {
-        const pinching = pinchOf(arrowHand, this.pinching)
+        const pinching = pinchOf(arrowHand, this.pinching, video)
         if (pinching === null) {
           // Unknown geometry is tracking loss, never evidence of an open pinch.
           this.clearRelease()
@@ -168,7 +193,7 @@ export class ArcheryController {
         this.lostDuringDraw = true
       }
     } else if (this.phase === 'armed' && bow && arrowHand && handArrowPose) {
-      const pinching = pinchOf(arrowHand, this.pinching)
+      const pinching = pinchOf(arrowHand, this.pinching, video)
       this.pinching = pinching ?? this.pinching
       if (pinching) {
         const thumb = landmarkToViewport(arrowHand.landmarks[4], viewport, video)
@@ -181,12 +206,25 @@ export class ArcheryController {
         }
       }
     } else if (arrowHand) {
-      this.pinching = pinchOf(arrowHand, this.pinching) ?? this.pinching
+      this.pinching = pinchOf(arrowHand, this.pinching, video) ?? this.pinching
     }
 
     const attached = (this.phase === 'nocked' || this.phase === 'drawing') && bow
     const arrowPose = attached ? attachedArrowPose(bow, this.draw, viewport) : handArrowPose
+    const pinchValid = arrowHand ? pinchOf(arrowHand, this.pinching, video) !== null : false
+    const thumb = pinchValid ? landmarkToViewport(arrowHand!.landmarks[4], viewport, video) : null
+    const index = pinchValid ? landmarkToViewport(arrowHand!.landmarks[8], viewport, video) : null
+    const pinchPoint = thumb && index ? { x: (thumb.x + index.x) / 2, y: (thumb.y + index.y) / 2 } : null
+    const string = bow ? bowStringCenter(bow) : null
     return {
+      feedback: {
+        bowPose: bow,
+        pinchPoint,
+        pinching: this.pinching,
+        nearString: !!(pinchPoint && string && bow && Math.hypot(pinchPoint.x - string.x, pinchPoint.y - string.y) <= bow.length * nockRadiusFraction),
+        recovering: !!attached && (!input.bowPose || !pinchValid || this.lostDuringDraw),
+        canShoot: !!attached && !this.lostDuringDraw && this.draw >= minShotFraction / maxDrawFraction,
+      },
       phase: this.phase,
       draw: this.draw,
       arrowPose,

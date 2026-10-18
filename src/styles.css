@@ -6,3 +6,15 @@
 @media(max-height:600px){.start-icon{margin-bottom:15px;width:65px;height:65px}.start-overlay h1{font-size:35px;margin:8px 0}.start-overlay p{font-size:11px}.start-button{margin-top:13px;min-height:40px}.privacy{margin-top:11px}.hand-guidance{top:44%}.ar-bottom-hud{bottom:9px}}
 .second-hand-tip{position:absolute;z-index:5;top:95px;left:50%;transform:translateX(-50%);max-width:calc(100% - 110px);padding:9px 14px;border:1px solid #d4ab6d8c;border-radius:6px;background:#1c2930c9;color:#ffe0a6;font-size:11px;font-weight:700;text-align:center;pointer-events:none;backdrop-filter:blur(8px)}
 @media(max-width:650px){.second-hand-tip{top:80px;font-size:10px;max-width:calc(100% - 40px)}}
+
+.archery-feedback{position:absolute;inset:0;z-index:4;pointer-events:none}
+.nock-target{position:absolute;transform:translate(-50%,-50%);width:42px;height:42px;border:2px dashed #d9e7ec;border-radius:50%;display:grid;place-items:center;color:white;font-size:24px;background:#10273580;box-shadow:0 0 0 7px #ffffff12;transition:background .12s,border-color .12s,box-shadow .12s}
+.nock-target.is-near{border-style:solid;border-color:#74f4be;background:#145a4799;box-shadow:0 0 0 9px #74f4be24,0 0 24px #74f4be66}
+.pinch-marker{position:absolute;transform:translate(-50%,-50%);width:24px;height:24px;display:grid;place-items:center;border:2px solid #d4dce1;border-radius:50%;background:#45515de6;color:#fff;font-size:14px}
+.pinch-marker.is-locked{background:#126345;border-color:#80ffbd;color:#b4ffcf;box-shadow:0 0 12px #6bffac80}
+.draw-feedback{position:absolute;transform:translateX(-50%);width:184px;padding:10px 12px;border:1px solid #75e9df80;border-radius:10px;background:#081c2bef;color:#ecfffa;text-align:center}
+.draw-feedback strong{font-size:12px}.draw-feedback small{display:block;font-size:10px;color:#b7d9d7}
+.draw-meter{height:6px;margin:8px 0;border-radius:9px;overflow:hidden;background:#ffffff25}
+.draw-meter span{display:block;height:100%;border-radius:inherit;transition:width .08s linear,background .1s}
+.draw-feedback.is-recovering{border-color:#ffc879;color:#ffe0a6}
+@media(prefers-reduced-motion:reduce){.draw-meter span,.nock-target{transition:none}}

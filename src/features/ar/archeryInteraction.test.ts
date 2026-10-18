@@ -149,3 +149,91 @@ describe('pinch release stability', () => {
     expect(controller.update(input(350, arrowHand(.72, false), false)).shot).not.toBeNull()
   })
 })
+
+describe('archery guidance and recovery', () => {
+  it('reports proximity, attachment, power and resumes after a short bow occlusion', () => {
+    const controller = new ArcheryController()
+    const y = bowStringCenter(bowPose).y / 1000
+    const nearby = controller.update(input(0, arrowHand(y, false), true))
+    expect(nearby.feedback?.nearString).toBe(true)
+    expect(nearby.feedback?.pinching).toBe(false)
+    const nocked = controller.update(input(50, arrowHand(y, true), false))
+    expect(nocked.feedback?.pinching).toBe(true)
+    expect(nocked.feedback?.canShoot).toBe(false)
+    const drawn = controller.update(input(100, arrowHand(.72, true), false))
+    expect(drawn.feedback?.canShoot).toBe(true)
+    const held = controller.update({ ...input(150, arrowHand(.72, true), false), bowPose: null })
+    expect(held.feedback?.recovering).toBe(true)
+    expect(held.feedback?.canShoot).toBe(false)
+    expect(held.feedback?.bowPose).toEqual(bowPose)
+    expect(held.draw).toBe(drawn.draw)
+    expect(held.arrowPose).toEqual(drawn.arrowPose)
+    const resumed = controller.update(input(200, arrowHand(.72, true), false))
+    expect(resumed.feedback?.recovering).toBe(false)
+    expect(resumed.phase).toBe('drawing')
+    expect(release(controller, input(250, arrowHand(.72, false), false)).shot).not.toBeNull()
+  })
+
+  it('does not fire from an open pinch while the bow is occluded', () => {
+    const controller = new ArcheryController()
+    const y = bowStringCenter(bowPose).y / 1000
+    controller.update(input(0, arrowHand(y, false), true))
+    controller.update(input(50, arrowHand(y, true), false))
+    controller.update(input(100, arrowHand(.72, true), false))
+    const held = release(controller, { ...input(150, arrowHand(.72, false), false), bowPose: null })
+    expect(held.shot).toBeNull()
+    expect(held.phase).toBe('drawing')
+    const resumedOpen = release(controller, input(300, arrowHand(.72, false), false))
+    expect(resumedOpen.shot).toBeNull()
+    expect(resumedOpen.phase).toBe('armed')
+  })
+})
+
+describe('release evidence while pulling', () => {
+  function start() {
+    const controller = new ArcheryController()
+    const y = bowStringCenter(bowPose).y / 1000
+    controller.update(input(0, arrowHand(y, false), true))
+    controller.update(input(50, arrowHand(y, true), false))
+    return controller
+  }
+
+  it('holds at partial and full power when 3D tips drift but visible fingertips stay together', () => {
+    const controller = start()
+    for (let now = 100; now <= 1000; now += 50) {
+      const y = now < 600 ? .72 : .95
+      const held = arrowHand(y, true)
+      held.worldLandmarks = arrowHand(y, false).landmarks
+      const state = controller.update(input(now, held, false))
+      expect(state.phase).toBe('drawing')
+      expect(state.shot).toBeNull()
+      expect(state.feedback?.pinching).toBe(true)
+      expect(state.draw).toBeGreaterThan(.5)
+    }
+    const opened = arrowHand(.95, false)
+    opened.worldLandmarks = opened.landmarks
+    expect(release(controller, input(1050, opened, false)).shot).not.toBeNull()
+  })
+
+  it('holds through moderate sustained separation noise in image-only tracking', () => {
+    const controller = start()
+    const noisy = arrowHand(.72, true)
+    noisy.landmarks[4].x -= .035
+    noisy.landmarks[8].x += .035
+    for (let now = 100; now <= 600; now += 50) {
+      const state = controller.update(input(now, noisy, false))
+      expect(state.shot).toBeNull()
+      expect(state.phase).toBe('drawing')
+    }
+    expect(release(controller, input(650, arrowHand(.72, false), false)).shot).not.toBeNull()
+  })
+
+  it('holds when image tips drift apart but 3D still reports a closed pinch', () => {
+    const controller = start()
+    const uncertain = arrowHand(.72, false)
+    uncertain.worldLandmarks = arrowHand(.72, true).landmarks
+    const state = release(controller, input(100, uncertain, false))
+    expect(state.shot).toBeNull()
+    expect(state.phase).toBe('drawing')
+  })
+})
